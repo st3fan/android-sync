@@ -50,6 +50,54 @@ public class ReadingListClient {
     return new BaseResource(this.articlesBaseURI.resolve(rel));
   }
 
+  private static final class DelegatingUploadResourceDelegate extends UploadResourceDelegate<ReadingListRecordResponse> {
+    private final ClientReadingListRecord         up;
+    private final ReadingListRecordUploadDelegate uploadDelegate;
+
+    DelegatingUploadResourceDelegate(Resource resource,
+                                     AuthHeaderProvider auth,
+                                     ResponseFactory<ReadingListRecordResponse> factory,
+                                     ClientReadingListRecord up,
+                                     ReadingListRecordUploadDelegate uploadDelegate) {
+      super(resource, auth, factory);
+      this.up = up;
+      this.uploadDelegate = uploadDelegate;
+    }
+
+    @Override
+    void onFailure(MozResponse response) {
+      if (response.getStatusCode() == 400) {
+        // Error response.
+        uploadDelegate.onBadRequest(up, response);
+      } else {
+        uploadDelegate.onFailure(up, response);
+      }
+    }
+
+    @Override
+    void onFailure(Exception ex) {
+      uploadDelegate.onFailure(up, ex);
+    }
+
+    @Override
+    void onSuccess(ReadingListRecordResponse response) {
+      final ServerReadingListRecord down;
+      try {
+        down = response.getRecord();
+      } catch (Exception e) {
+        uploadDelegate.onFailure(up, e);
+        return;
+      }
+
+      uploadDelegate.onSuccess(up, response, down);
+    }
+
+    @Override
+    void onSeeOther(ReadingListRecordResponse response) {
+      uploadDelegate.onConflict(up, response);
+    }
+  }
+
   private static abstract class ReadingListResourceDelegate<T extends ReadingListResponse> extends BaseResourceDelegate {
     private final ReadingListResponse.ResponseFactory<T> factory;
     private final AuthHeaderProvider auth;
@@ -282,46 +330,23 @@ public class ReadingListClient {
   }
 
   // TODO: how do we upload only a delta?
-  public void patch(final ReadingListRecord record, final ReadingListRecordUploadDelegate delegate) {
-    // TODO
+  public void patch(final ClientReadingListRecord up, final ReadingListRecordUploadDelegate uploadDelegate) {
+    final String guid = up.getGUID();
+    if (guid == null) {
+      throw new IllegalArgumentException("Supplied record must have a GUID.");
+    }
+
+    final BaseResource r = getRelativeArticleResource(guid);
+    r.delegate = new DelegatingUploadResourceDelegate(r, auth, ReadingListRecordResponse.FACTORY, up,
+                                                      uploadDelegate);
+
+    r.post(up.toJSON());
   }
 
   public void add(final ClientReadingListRecord up, final ReadingListRecordUploadDelegate uploadDelegate) {
     final BaseResource r = new BaseResource(this.articlesURI);
-    r.delegate = new UploadResourceDelegate<ReadingListRecordResponse>(r, auth, ReadingListRecordResponse.FACTORY) {
-      @Override
-      void onFailure(MozResponse response) {
-        if (response.getStatusCode() == 400) {
-          // Error response.
-          uploadDelegate.onBadRequest(up, response);
-        } else {
-          uploadDelegate.onFailure(up, response);
-        }
-      }
-
-      @Override
-      void onFailure(Exception ex) {
-        uploadDelegate.onFailure(up, ex);
-      }
-
-      @Override
-      void onSuccess(ReadingListRecordResponse response) {
-        final ServerReadingListRecord down;
-        try {
-          down = response.getRecord();
-        } catch (Exception e) {
-          uploadDelegate.onFailure(up, e);
-          return;
-        }
-
-        uploadDelegate.onSuccess(up, response, down);
-      }
-
-      @Override
-      void onSeeOther(ReadingListRecordResponse response) {
-        uploadDelegate.onConflict(up, response);
-      }
-    };
+    r.delegate = new DelegatingUploadResourceDelegate(r, auth, ReadingListRecordResponse.FACTORY, up,
+                                                      uploadDelegate);
 
     r.post(up.toJSON());
   }

@@ -12,12 +12,14 @@ import static org.mozilla.gecko.db.BrowserContract.ReadingListItems.SYNC_STATUS_
 import static org.mozilla.gecko.db.BrowserContract.ReadingListItems.SYNC_STATUS_NEW;
 
 import java.util.ArrayList;
+import java.util.Collection;
 
 import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.db.BrowserContract.ReadingListItems;
 import org.mozilla.gecko.sync.repositories.android.RepoUtils;
 
 import android.content.ContentProviderClient;
+import android.content.ContentValues;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.RemoteException;
@@ -158,5 +160,19 @@ public class LocalReadingListStorage implements ReadingListStorage {
         records.add(record);
       }
     };
+  }
+
+  @Override
+  public void clearStatusChanges(Collection<String> uploaded) {
+    ContentValues values = new ContentValues();
+    values.put(ReadingListItems.SYNC_CHANGE_FLAGS, ReadingListItems.SYNC_CHANGE_NONE);
+    values.put(ReadingListItems.SYNC_STATUS, ReadingListItems.SYNC_STATUS_SYNCED);
+    final String where = RepoUtils.computeSQLInClause(uploaded.size(), ReadingListItems.GUID);
+    final String[] args = uploaded.toArray(new String[uploaded.size()]);
+    try {
+      client.update(URI_WITHOUT_DELETED, values, where, args);
+    } catch (RemoteException e) {
+      // Nothing we can do.
+    }
   }
 }

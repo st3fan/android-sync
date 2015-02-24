@@ -5,6 +5,7 @@
 package org.mozilla.gecko.reading;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.LinkedList;
 import java.util.Queue;
 
@@ -108,8 +109,8 @@ public class ReadingListSynchronizer {
   }
 
   private static class StatusUploadDelegate implements ReadingListRecordUploadDelegate {
-    final Queue<String> uploaded = new LinkedList<>();
-    final Queue<String> failed = new LinkedList<>();
+    final Collection<String> uploaded = new LinkedList<>();
+    final Collection<String> failed = new LinkedList<>();
     private final ReadingListChangeAccumulator acc;
 
     public int failures = 0;
@@ -263,7 +264,9 @@ public class ReadingListSynchronizer {
         this.remote.patch(rec, uploadDelegate);
       }
 
-      // TODO: track these within the synchronizer.
+      // Mark these records as unchanged.
+      // TODO: perhaps this isn't necessary; we can do it when we flush the accumulator?
+      this.local.clearStatusChanges(uploadDelegate.uploaded);
       delegate.onStatusUploadComplete(uploadDelegate.uploaded, uploadDelegate.failed);
       return acc;
     } catch (IllegalStateException e) {
