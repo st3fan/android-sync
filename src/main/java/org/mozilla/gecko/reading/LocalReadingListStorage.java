@@ -168,8 +168,7 @@ public class LocalReadingListStorage implements ReadingListStorage {
     this.client = client;
   }
 
-  @Override
-  public Cursor getModified() {
+  public Cursor getModifiedWithSelection(final String selection) {
     final String[] projection = new String[] {
       ReadingListItems.GUID,
       ReadingListItems.IS_FAVORITE,
@@ -178,13 +177,27 @@ public class LocalReadingListStorage implements ReadingListStorage {
       ReadingListItems.EXCERPT,
     };
 
-    final String selection = ReadingListItems.SYNC_STATUS + " = " + ReadingListItems.SYNC_STATUS_MODIFIED;;
 
     try {
       return client.query(URI_WITHOUT_DELETED, projection, selection, null, null);
     } catch (RemoteException e) {
       throw new IllegalStateException(e);
     }
+  }
+  @Override
+  public Cursor getModified() {
+    final String selection = ReadingListItems.SYNC_STATUS + " = " + ReadingListItems.SYNC_STATUS_MODIFIED;
+    return getModifiedWithSelection(selection);
+  }
+
+  // Return changed items that aren't just status changes.
+  // This isn't necessary because we insist on processing status changes before modified items.
+  // Currently we only need this for tests...
+  public Cursor getNonStatusModified() {
+    final String selection = ReadingListItems.SYNC_STATUS + " = " + ReadingListItems.SYNC_STATUS_MODIFIED +
+                             " AND ((" + ReadingListItems.SYNC_CHANGE_FLAGS + " & " + ReadingListItems.SYNC_CHANGE_RESOLVED + ") > 0)";
+
+    return getModifiedWithSelection(selection);
   }
 
   // These will never conflict (in the case of unread status changes), or
@@ -216,7 +229,7 @@ public class LocalReadingListStorage implements ReadingListStorage {
   public Cursor getNew() {
     // N.B., query for items that have no GUID, regardless of status.
     // They should all be marked as NEW, but belt and braces.
-    final String selection = SYNC_STATUS + " = " + SYNC_STATUS_NEW + " OR " + ReadingListItems.GUID + " IS NULL";
+    final String selection = "(" + SYNC_STATUS + " = " + SYNC_STATUS_NEW + ") OR (" + ReadingListItems.GUID + " IS NULL)";
 
     try {
       return client.query(URI_WITHOUT_DELETED, null, selection, null, null);
