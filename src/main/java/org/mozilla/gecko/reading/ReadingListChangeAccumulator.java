@@ -11,7 +11,8 @@ package org.mozilla.gecko.reading;
  */
 public interface ReadingListChangeAccumulator {
   void addDeletion(ClientReadingListRecord record);
-  void addChangedRecord(ReadingListRecord record);
+  void addChangedRecord(ClientReadingListRecord record);
+  void addUploadedRecord(ClientReadingListRecord up, ServerReadingListRecord down);
   void finish();
   boolean flushDeletions();
 }

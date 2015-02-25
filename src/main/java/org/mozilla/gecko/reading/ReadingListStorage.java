@@ -4,8 +4,6 @@
 
 package org.mozilla.gecko.reading;
 
-import java.util.Collection;
-
 import android.database.Cursor;
 
 public interface ReadingListStorage {
@@ -13,6 +11,4 @@ public interface ReadingListStorage {
   Cursor getStatusChanges();
   Cursor getNew();
   ReadingListChangeAccumulator getChangeAccumulator();
-
-  void clearStatusChanges(Collection<String> uploaded);
 }

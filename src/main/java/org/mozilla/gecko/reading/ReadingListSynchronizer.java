@@ -43,6 +43,7 @@ public class ReadingListSynchronizer {
   private static final class NewItemUploadDelegate implements ReadingListRecordUploadDelegate {
     final Queue<String> uploaded = new LinkedList<>();
     final Queue<String> failed = new LinkedList<>();
+    final Queue<String> toEnsureDownloaded = new LinkedList<>();
 
     public int failures = 0;
     private final ReadingListChangeAccumulator acc;
@@ -51,12 +52,20 @@ public class ReadingListSynchronizer {
       this.acc = acc;
     }
 
+    /**
+     * When an operation implies that a server record is a replacement
+     * for a local record, call this to ensure that we have a copy.
+     */
+    private void ensureDownloaded(String id) {
+      toEnsureDownloaded.add(id);
+    }
+
     @Override
     public void onSuccess(ClientReadingListRecord up,
                           ReadingListRecordResponse response,
                           ServerReadingListRecord down) {
       // Apply the resulting record. The server will have populated some fields.
-      acc.addChangedRecord(down);
+      acc.addChangedRecord(up.givenServerRecord(down));
     }
 
     @Override
@@ -66,6 +75,7 @@ public class ReadingListSynchronizer {
         body = response.jsonObjectBody();
         String conflicting = body.getString("id");
         Logger.warn(LOG_TAG, "Conflict detected: remote ID is " + conflicting);
+        ensureDownloaded(conflicting);
       } catch (IllegalStateException | NonObjectJSONException | IOException |
                ParseException e) {
         // Oops.
@@ -142,7 +152,7 @@ public class ReadingListSynchronizer {
       }
 
       uploaded.add(up.getGUID());
-      acc.addChangedRecord(down);
+      acc.addChangedRecord(up.givenServerRecord(down));
     }
 
     @Override
@@ -263,10 +273,6 @@ public class ReadingListSynchronizer {
         // the server will reconcile for us.
         this.remote.patch(rec, uploadDelegate);
       }
-
-      // Mark these records as unchanged.
-      // TODO: perhaps this isn't necessary; we can do it when we flush the accumulator?
-      this.local.clearStatusChanges(uploadDelegate.uploaded);
       delegate.onStatusUploadComplete(uploadDelegate.uploaded, uploadDelegate.failed);
       return acc;
     } catch (IllegalStateException e) {
@@ -306,11 +312,22 @@ public class ReadingListSynchronizer {
         this.remote.add(rec, uploadDelegate);
       }
 
+      addEnsureDownloadedToPrefs(uploadDelegate.toEnsureDownloaded);
+
+      // We mark uploaded records as synced when we apply the server record with the
+      // GUID -- we don't know the GUID yet!
       return acc;
     } catch (IllegalStateException e) {
       delegate.onUnableToSync(e);
       return null;
     }
+  }
+
+  private void addEnsureDownloadedToPrefs(Queue<String> toEnsureDownloaded) {
+    if (toEnsureDownloaded.isEmpty()) {
+      return;
+    }
+    // TODO
   }
 
   public void uploadModified(final ReadingListSynchronizerDelegate delegate) {
@@ -334,5 +351,6 @@ public class ReadingListSynchronizer {
     // in memory, but of course this runs into invalidation issues if
     // concurrent writes are occurring.
     // TODO: download.
+    // TODO: ensure downloaded.
   }
 }

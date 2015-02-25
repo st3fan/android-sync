@@ -12,28 +12,154 @@ import static org.mozilla.gecko.db.BrowserContract.ReadingListItems.SYNC_STATUS_
 import static org.mozilla.gecko.db.BrowserContract.ReadingListItems.SYNC_STATUS_NEW;
 
 import java.util.ArrayList;
-import java.util.Collection;
 
 import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.db.BrowserContract.ReadingListItems;
 import org.mozilla.gecko.sync.repositories.android.RepoUtils;
 
 import android.content.ContentProviderClient;
+import android.content.ContentProviderOperation;
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.RemoteException;
 
 public class LocalReadingListStorage implements ReadingListStorage {
+
+  final class LocalReadingListChangeAccumulator implements ReadingListChangeAccumulator {
+    private final ArrayList<ClientReadingListRecord> changes;
+    private final ArrayList<ClientReadingListRecord> deletions;
+
+    LocalReadingListChangeAccumulator() {
+      this.changes = new ArrayList<>();
+      this.deletions = new ArrayList<>();
+    }
+
+    @Override
+    public boolean flushDeletions() {
+      if (deletions.isEmpty()) {
+        return true;
+      }
+
+      long[] ids = new long[deletions.size()];
+      String[] guids = new String[deletions.size()];
+      int iID = 0;
+      int iGUID = 0;
+      for (ClientReadingListRecord record : deletions) {
+        if (record.clientMetadata.id > -1L) {
+          ids[iID++] = record.clientMetadata.id;
+        } else {
+          final String guid = record.getGUID();
+          if (guid == null) {
+            continue;
+          }
+          guids[iGUID++] = guid;
+        }
+      }
+
+      try {
+        if (iID > 0) {
+          client.delete(URI_WITH_DELETED, RepoUtils.computeSQLLongInClause(ids, ReadingListItems._ID), null);
+        }
+
+        if (iGUID > 0) {
+          client.delete(URI_WITH_DELETED, RepoUtils.computeSQLInClause(iGUID, ReadingListItems.GUID), guids);
+        }
+      } catch (RemoteException e) {
+        // Not much we can do here.
+        return false;
+      }
+
+      deletions.clear();
+      return true;
+    }
+
+    public boolean flushRecordChanges() {
+      if (changes.isEmpty()) {
+        return true;
+      }
+
+      // For each returned record, apply it to the local store and clear all sync flags.
+      // We can do this because the server always returns the entire record.
+      //
+      // <https://github.com/mozilla-services/readinglist/issues/138> tracks not doing so
+      // for certain patches, which allows us to optimize here.
+      ArrayList<ContentProviderOperation> operations = new ArrayList<>(changes.size());
+      for (ClientReadingListRecord rec : changes) {
+        operations.add(makeOp(rec));
+      }
+      return true;
+    }
+
+    private ContentProviderOperation makeOp(ClientReadingListRecord rec) {
+      final String selection;
+      final String[] selectionArgs;
+
+      if (rec.clientMetadata.id > -1L) {
+        selection = ReadingListItems._ID + " = " + rec.clientMetadata.id;
+        selectionArgs = null;
+      } else if (rec.serverMetadata.guid != null) {
+        selection = ReadingListItems.GUID + " ? ";
+        selectionArgs = new String[] { rec.serverMetadata.guid };
+      } else {
+        final String url = rec.fields.getString("url");
+        final String resolvedURL = rec.fields.getString("resolved_url");
+
+        if (url == null && resolvedURL == null) {
+          // We're outta luck.
+          return null;
+        }
+
+        selection = "(" + ReadingListItems.URL + " = ?) OR (" + ReadingListItems.RESOLVED_URL + " = ?)";
+        if (url != null && resolvedURL != null) {
+          selectionArgs = new String[] { url, resolvedURL };
+        } else {
+          final String arg = url == null ? resolvedURL : url;
+          selectionArgs = new String[] { arg, arg };
+        }
+      }
+
+      final ContentValues values = ReadingListClientContentValuesFactory.fromClientRecord(rec);
+      return ContentProviderOperation.newUpdate(URI_WITHOUT_DELETED)
+                                     .withSelection(selection, selectionArgs)
+                                     .withValues(values)
+                                     .build();
+    }
+
+    @Override
+    public void finish() {
+      flushDeletions();
+      flushRecordChanges();
+    }
+
+    @Override
+    public void addDeletion(ClientReadingListRecord record) {
+      deletions.add(record);
+    }
+
+    @Override
+    public void addChangedRecord(ClientReadingListRecord record) {
+      changes.add(record);
+    }
+
+    @Override
+    public void addUploadedRecord(ClientReadingListRecord up,
+                                  ServerReadingListRecord down) {
+      // TODO
+    }
+  }
+
   private final ContentProviderClient client;
   private final Uri URI_WITHOUT_DELETED = BrowserContract.READING_LIST_AUTHORITY_URI
       .buildUpon()
+      .appendPath("items")
       .appendQueryParameter(BrowserContract.PARAM_IS_SYNC, "1")
       .appendQueryParameter(BrowserContract.PARAM_SHOW_DELETED, "0")
       .build();
 
   private final Uri URI_WITH_DELETED = BrowserContract.READING_LIST_AUTHORITY_URI
       .buildUpon()
+      .appendPath("items")
       .appendQueryParameter(BrowserContract.PARAM_IS_SYNC, "1")
       .appendQueryParameter(BrowserContract.PARAM_SHOW_DELETED, "1")
       .build();
@@ -101,69 +227,14 @@ public class LocalReadingListStorage implements ReadingListStorage {
 
   @Override
   public ReadingListChangeAccumulator getChangeAccumulator() {
-    final ArrayList<ClientReadingListRecord> delete = new ArrayList<>();
-    final ArrayList<ReadingListRecord> records = new ArrayList<>();
-
-    return new ReadingListChangeAccumulator() {
-      @Override
-      public boolean flushDeletions() {
-        if (delete.size() == 0) {
-          return true;
-        }
-
-        long[] ids = new long[delete.size()];
-        String[] guids = new String[delete.size()];
-        int iID = 0;
-        int iGUID = 0;
-        for (ClientReadingListRecord record : delete) {
-          if (record.clientMetadata.id > -1L) {
-            ids[iID++] = record.clientMetadata.id;
-          } else {
-            final String guid = record.getGUID();
-            if (guid == null) {
-              continue;
-            }
-            guids[iGUID++] = guid;
-          }
-        }
-
-        try {
-          if (iID > 0) {
-            client.delete(URI_WITH_DELETED, RepoUtils.computeSQLLongInClause(ids, ReadingListItems._ID), null);
-          }
-
-          if (iGUID > 0) {
-            client.delete(URI_WITH_DELETED, RepoUtils.computeSQLInClause(iGUID, ReadingListItems.GUID), guids);
-          }
-        } catch (RemoteException e) {
-          // Not much we can do here.
-          return false;
-        }
-
-        delete.clear();
-        return true;
-      }
-
-      @Override
-      public void finish() {
-        flushDeletions();
-        // TODO
-      }
-
-      @Override
-      public void addDeletion(ClientReadingListRecord record) {
-        delete.add(record);
-      }
-
-      @Override
-      public void addChangedRecord(ReadingListRecord record) {
-        records.add(record);
-      }
-    };
+    return new LocalReadingListChangeAccumulator();
   }
 
-  @Override
-  public void clearStatusChanges(Collection<String> uploaded) {
+  /**
+   * Unused: we implicitly do this when we apply the server record.
+   */
+  /*
+  public void markStatusChangedItemsAsSynced(Collection<String> uploaded) {
     ContentValues values = new ContentValues();
     values.put(ReadingListItems.SYNC_CHANGE_FLAGS, ReadingListItems.SYNC_CHANGE_NONE);
     values.put(ReadingListItems.SYNC_STATUS, ReadingListItems.SYNC_STATUS_SYNCED);
@@ -175,4 +246,5 @@ public class LocalReadingListStorage implements ReadingListStorage {
       // Nothing we can do.
     }
   }
+  */
 }
