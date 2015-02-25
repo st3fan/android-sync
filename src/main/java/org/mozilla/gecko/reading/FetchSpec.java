@@ -41,10 +41,10 @@ public class FetchSpec {
 
     private void ampersand() {
       if (first) {
+        first = false;
         return;
       }
       b.append('&');
-      first = false;
     }
 
     public Builder setUnread(boolean unread) {
