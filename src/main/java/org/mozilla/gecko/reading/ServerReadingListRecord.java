@@ -7,7 +7,7 @@ package org.mozilla.gecko.reading;
 import org.mozilla.gecko.sync.ExtendedJSONObject;
 
 public class ServerReadingListRecord extends ReadingListRecord {
-  private final ExtendedJSONObject fields;
+  final ExtendedJSONObject fields;
 
   public ServerReadingListRecord(ExtendedJSONObject obj) {
     super(new ServerMetadata(obj));

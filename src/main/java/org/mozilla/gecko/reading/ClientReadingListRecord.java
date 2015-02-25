@@ -7,7 +7,7 @@ package org.mozilla.gecko.reading;
 import org.mozilla.gecko.sync.ExtendedJSONObject;
 
 public class ClientReadingListRecord extends ReadingListRecord {
-  private final ExtendedJSONObject fields;
+  final ExtendedJSONObject fields;
   public ClientMetadata clientMetadata;
 
   private String getDefaultAddedBy() {
@@ -67,5 +67,13 @@ public class ClientReadingListRecord extends ReadingListRecord {
   @Override
   public String getTitle() {
     return this.fields.getString("title");  // TODO: resolved_title
+  }
+
+  /**
+   * Produce a record just like the server record, but with the
+   * appropriate additional metadata, such as the local numeric ID.
+   */
+  public ClientReadingListRecord givenServerRecord(ServerReadingListRecord down) {
+    return new ClientReadingListRecord(down.serverMetadata, this.clientMetadata, down.fields);
   }
 }
